@@ -3,10 +3,15 @@ package ui
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/BioWare/lazyobsidian/internal/config"
+	"github.com/BioWare/lazyobsidian/internal/ui/theme"
+	"github.com/BioWare/lazyobsidian/internal/ui/views"
 )
 
 // View represents the current active view/page.
@@ -233,28 +238,123 @@ func (a *App) renderHeader() string {
 }
 
 func (a *App) renderMainPanel(width, height int) string {
+	// Title bar
+	title := a.getViewTitle()
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#3D3428"))
+	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4C9B5"))
+
+	titleBar := titleStyle.Render(" " + title)
+
+	// Content
+	var content string
+	contentHeight := height - 2 // minus title and border
+
 	switch a.currentView {
 	case ViewDashboard:
-		return renderPlaceholder("Dashboard", width, height)
+		dashboard := views.NewDashboard(width-2, contentHeight)
+		// Set demo data for now
+		dashboard.PomodoroState = views.PomodoroState{
+			State:     "ready",
+			Remaining: 25 * time.Minute,
+			DailyGoal: 5,
+			DailyDone: 0,
+		}
+		dashboard.WeeklyStats = views.WeeklyStats{
+			Pomodoros: 18,
+			FocusTime: 7*time.Hour + 30*time.Minute,
+			Streak:    12,
+			ByDay:     [7]int{4, 5, 3, 2, 4, 0, 0},
+		}
+		content = dashboard.Render()
+
 	case ViewCalendar:
-		return renderPlaceholder("Calendar", width, height)
+		content = renderPlaceholderContent("Calendar - Coming soon", width-2, contentHeight)
 	case ViewGoals:
-		return renderPlaceholder("Goals", width, height)
+		content = renderPlaceholderContent("Goals - Coming soon", width-2, contentHeight)
 	case ViewCourses:
-		return renderPlaceholder("Courses", width, height)
+		content = renderPlaceholderContent("Courses - Coming soon", width-2, contentHeight)
 	case ViewBooks:
-		return renderPlaceholder("Books", width, height)
+		content = renderPlaceholderContent("Books - Coming soon", width-2, contentHeight)
 	case ViewWishlist:
-		return renderPlaceholder("Wishlist", width, height)
+		content = renderPlaceholderContent("Wishlist - Coming soon", width-2, contentHeight)
 	case ViewGraph:
-		return renderPlaceholder("Graph", width, height)
+		content = renderPlaceholderContent("Graph - Coming soon", width-2, contentHeight)
 	case ViewStats:
-		return renderPlaceholder("Statistics", width, height)
+		content = renderPlaceholderContent("Statistics - Coming soon", width-2, contentHeight)
 	case ViewSettings:
-		return renderPlaceholder("Settings", width, height)
+		content = renderPlaceholderContent("Settings - Coming soon", width-2, contentHeight)
 	default:
-		return renderPlaceholder("Unknown", width, height)
+		content = renderPlaceholderContent("Unknown view", width-2, contentHeight)
 	}
+
+	// Build panel with border
+	var lines []string
+	lines = append(lines, borderStyle.Render("┌─")+titleBar+borderStyle.Render(" "+strings.Repeat("─", width-len(title)-6)+"┐"))
+
+	contentLines := strings.Split(content, "\n")
+	for i := 0; i < contentHeight; i++ {
+		line := ""
+		if i < len(contentLines) {
+			line = contentLines[i]
+		}
+		// Ensure line fits width
+		if len(line) > width-4 {
+			line = line[:width-5] + "…"
+		}
+		paddedLine := line + strings.Repeat(" ", max(0, width-len(line)-4))
+		lines = append(lines, borderStyle.Render("│ ")+paddedLine+borderStyle.Render(" │"))
+	}
+
+	lines = append(lines, borderStyle.Render("└"+strings.Repeat("─", width-2)+"┘"))
+
+	return strings.Join(lines, "\n")
+}
+
+func (a *App) getViewTitle() string {
+	switch a.currentView {
+	case ViewDashboard:
+		return "Dashboard"
+	case ViewCalendar:
+		return "Calendar"
+	case ViewGoals:
+		return "Goals"
+	case ViewCourses:
+		return "Courses"
+	case ViewBooks:
+		return "Books"
+	case ViewWishlist:
+		return "Wishlist"
+	case ViewGraph:
+		return "Graph"
+	case ViewStats:
+		return "Statistics"
+	case ViewSettings:
+		return "Settings"
+	default:
+		return "Unknown"
+	}
+}
+
+func renderPlaceholderContent(text string, width, height int) string {
+	var lines []string
+	centerY := height / 2
+	for i := 0; i < height; i++ {
+		if i == centerY {
+			padding := (width - len(text)) / 2
+			line := strings.Repeat(" ", padding) + text
+			lines = append(lines, line)
+		} else {
+			lines = append(lines, "")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (a *App) renderFooter() string {
@@ -264,17 +364,29 @@ func (a *App) renderFooter() string {
 
 // Helper functions
 
-func renderPlaceholder(title string, width, height int) string {
-	return fmt.Sprintf("┌─ %s %s┐\n│%s│\n└%s┘",
-		title,
-		repeatStr("─", width-len(title)-5),
-		repeatStr(" ", width-2),
-		repeatStr("─", width-2),
-	)
-}
-
 func joinHorizontal(left, right string) string {
-	return left + "│" + right
+	leftLines := strings.Split(left, "\n")
+	rightLines := strings.Split(right, "\n")
+
+	maxLines := len(leftLines)
+	if len(rightLines) > maxLines {
+		maxLines = len(rightLines)
+	}
+
+	var result []string
+	for i := 0; i < maxLines; i++ {
+		leftLine := ""
+		rightLine := ""
+		if i < len(leftLines) {
+			leftLine = leftLines[i]
+		}
+		if i < len(rightLines) {
+			rightLine = rightLines[i]
+		}
+		result = append(result, leftLine+"│"+rightLine)
+	}
+
+	return strings.Join(result, "\n")
 }
 
 func spacer(n int) string {
@@ -304,8 +416,15 @@ func truncatePath(path string, maxLen int) string {
 
 // Run starts the TUI application.
 func Run(cfg *config.Config) error {
+	// Initialize theme
+	t, err := theme.LoadBuiltin(cfg.Theme.Current)
+	if err != nil {
+		t, _ = theme.LoadBuiltin("corsair-light")
+	}
+	t.Apply()
+
 	app := New(cfg)
 	p := tea.NewProgram(app, tea.WithAltScreen())
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
