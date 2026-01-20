@@ -9,9 +9,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/BioWare/lazyobsidian/internal/cache"
 	"github.com/BioWare/lazyobsidian/internal/config"
 	"github.com/BioWare/lazyobsidian/internal/ui/theme"
 	"github.com/BioWare/lazyobsidian/internal/ui/views"
+	"github.com/BioWare/lazyobsidian/internal/vault"
+	"github.com/BioWare/lazyobsidian/internal/watcher"
+	"github.com/BioWare/lazyobsidian/pkg/types"
 )
 
 // View represents the current active view/page.
@@ -40,6 +44,9 @@ const (
 // App is the main application model.
 type App struct {
 	config      *config.Config
+	cache       *cache.Cache
+	parser      *vault.Parser
+	watcher     *watcher.Watcher
 	width       int
 	height      int
 	currentView View
@@ -47,21 +54,213 @@ type App struct {
 	sidebar     *Sidebar
 	quitting    bool
 	err         error
+
+	// Data loaded from vault
+	todayTasks    []types.Task
+	activeCourses []types.Course
+	currentBook   *types.Book
+	recentNotes   []views.RecentNote
+	dailyGoal     *types.DailyGoal
+	weeklyStats   views.WeeklyStats
 }
 
 // New creates a new App instance.
-func New(cfg *config.Config) *App {
+func New(cfg *config.Config, c *cache.Cache, p *vault.Parser, w *watcher.Watcher) *App {
 	return &App{
 		config:      cfg,
+		cache:       c,
+		parser:      p,
+		watcher:     w,
 		currentView: ViewDashboard,
 		focus:       FocusSidebar,
 		sidebar:     NewSidebar(),
 	}
 }
 
+// Custom message types
+type dataLoadedMsg struct{}
+type fileChangedMsg struct {
+	path string
+}
+type tickMsg time.Time
+
 // Init implements tea.Model.
 func (a *App) Init() tea.Cmd {
-	return nil
+	return tea.Batch(
+		a.loadInitialData(),
+		a.startFileWatcher(),
+	)
+}
+
+// loadInitialData loads data from the vault and cache.
+func (a *App) loadInitialData() tea.Cmd {
+	return func() tea.Msg {
+		// Parse and cache today's daily note
+		today := time.Now()
+		if a.parser.DailyNoteExists(today) {
+			file, err := a.parser.ParseDailyNote(today)
+			if err == nil && file != nil {
+				a.cache.SaveFile(file)
+				a.todayTasks = file.Tasks
+			}
+		}
+
+		// Load courses from cache/vault
+		courseFiles, _ := a.cache.GetFilesByType(types.FileTypeCourse)
+		if len(courseFiles) == 0 {
+			// Parse from vault if cache is empty
+			files, _ := a.parser.ParseVault()
+			for _, f := range files {
+				a.cache.SaveFile(f)
+			}
+			courseFiles, _ = a.cache.GetFilesByType(types.FileTypeCourse)
+		}
+
+		// Convert course files to Course structs
+		for _, f := range courseFiles {
+			course := a.parseCourseFromFile(f)
+			if course != nil {
+				a.activeCourses = append(a.activeCourses, *course)
+			}
+		}
+
+		// Load books
+		bookFiles, _ := a.cache.GetFilesByType(types.FileTypeBook)
+		for _, f := range bookFiles {
+			book := a.parseBookFromFile(f)
+			if book != nil {
+				a.currentBook = book
+				break // Just get the first/most recent book
+			}
+		}
+
+		// Load recent notes
+		recentFiles, _ := a.cache.GetRecentFiles(5)
+		for _, f := range recentFiles {
+			a.recentNotes = append(a.recentNotes, views.RecentNote{
+				Title:    f.Title,
+				Path:     f.Path,
+				Modified: f.ModifiedAt,
+			})
+		}
+
+		// Load daily goal
+		a.dailyGoal, _ = a.cache.GetDailyGoal(today)
+		if a.dailyGoal == nil {
+			// Create default daily goal
+			a.cache.SetDailyGoal(today, a.config.Pomodoro.DailyGoal)
+			a.dailyGoal = &types.DailyGoal{
+				Date:      today,
+				Target:    a.config.Pomodoro.DailyGoal,
+				Completed: 0,
+			}
+		}
+
+		// Load weekly stats
+		byDay, totalPom, totalMin, _ := a.cache.GetWeeklyStats()
+		a.weeklyStats = views.WeeklyStats{
+			Pomodoros: totalPom,
+			FocusTime: time.Duration(totalMin) * time.Minute,
+			ByDay:     byDay,
+			Streak:    0, // TODO: Calculate streak from data
+		}
+
+		return dataLoadedMsg{}
+	}
+}
+
+// startFileWatcher starts listening for file changes.
+func (a *App) startFileWatcher() tea.Cmd {
+	if a.watcher == nil {
+		return nil
+	}
+
+	return func() tea.Msg {
+		// Start the watcher if not already started
+		a.watcher.Start()
+
+		// Wait for first event (blocks)
+		select {
+		case event := <-a.watcher.Events:
+			return fileChangedMsg{path: event.Path}
+		case <-time.After(time.Second):
+			// Timeout, return empty to re-poll
+			return nil
+		}
+	}
+}
+
+// waitForFileEvent waits for the next file event.
+func (a *App) waitForFileEvent() tea.Cmd {
+	if a.watcher == nil {
+		return nil
+	}
+
+	return func() tea.Msg {
+		select {
+		case event := <-a.watcher.Events:
+			return fileChangedMsg{path: event.Path}
+		case <-time.After(time.Second):
+			return nil
+		}
+	}
+}
+
+// parseCourseFromFile converts a File to a Course.
+func (a *App) parseCourseFromFile(f *types.File) *types.Course {
+	if f == nil || f.Frontmatter == nil {
+		return nil
+	}
+
+	course := &types.Course{
+		FileID: f.ID,
+		Title:  f.Title,
+	}
+
+	if source, ok := f.Frontmatter["source"].(string); ok {
+		course.Source = source
+	}
+	if url, ok := f.Frontmatter["url"].(string); ok {
+		course.URL = url
+	}
+
+	// Count completed and total lessons from tasks
+	completed, total := vault.CountTasks(f.Tasks)
+	course.TotalLessons = total
+	course.Completed = completed
+
+	return course
+}
+
+// parseBookFromFile converts a File to a Book.
+func (a *App) parseBookFromFile(f *types.File) *types.Book {
+	if f == nil || f.Frontmatter == nil {
+		return nil
+	}
+
+	book := &types.Book{
+		FileID: f.ID,
+		Title:  f.Title,
+	}
+
+	if author, ok := f.Frontmatter["author"].(string); ok {
+		book.Author = author
+	}
+	if pages, ok := f.Frontmatter["total_pages"].(string); ok {
+		fmt.Sscanf(pages, "%d", &book.TotalPages)
+	}
+	if current, ok := f.Frontmatter["current_page"].(string); ok {
+		fmt.Sscanf(current, "%d", &book.CurrentPage)
+	}
+
+	// Count completed chapters from tasks
+	completed, total := vault.CountTasks(f.Tasks)
+	if book.TotalPages == 0 {
+		book.TotalPages = total
+		book.CurrentPage = completed
+	}
+
+	return book
 }
 
 // Update implements tea.Model.
@@ -74,6 +273,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 		return a, nil
+
+	case dataLoadedMsg:
+		// Data loaded, nothing special to do
+		return a, nil
+
+	case fileChangedMsg:
+		// Re-parse the changed file
+		if msg.path != "" {
+			file, err := a.parser.ParseFile(msg.path)
+			if err == nil && file != nil {
+				a.cache.SaveFile(file)
+
+				// If it's today's daily note, update tasks
+				if file.Type == types.FileTypeDaily {
+					a.todayTasks = file.Tasks
+				}
+			}
+		}
+		// Continue listening for file events
+		return a, a.waitForFileEvent()
 
 	case error:
 		a.err = msg
@@ -252,19 +471,28 @@ func (a *App) renderMainPanel(width, height int) string {
 	switch a.currentView {
 	case ViewDashboard:
 		dashboard := views.NewDashboard(width-2, contentHeight)
-		// Set demo data for now
+
+		// Set real data from vault
+		dashboard.Tasks = a.todayTasks
+		dashboard.ActiveCourses = a.activeCourses
+		dashboard.CurrentBook = a.currentBook
+		dashboard.RecentNotes = a.recentNotes
+		dashboard.WeeklyStats = a.weeklyStats
+
+		// Set pomodoro state
+		dailyGoal := 5
+		dailyDone := 0
+		if a.dailyGoal != nil {
+			dailyGoal = a.dailyGoal.Target
+			dailyDone = a.dailyGoal.Completed
+		}
 		dashboard.PomodoroState = views.PomodoroState{
 			State:     "ready",
-			Remaining: 25 * time.Minute,
-			DailyGoal: 5,
-			DailyDone: 0,
+			Remaining: time.Duration(a.config.Pomodoro.WorkMinutes) * time.Minute,
+			DailyGoal: dailyGoal,
+			DailyDone: dailyDone,
 		}
-		dashboard.WeeklyStats = views.WeeklyStats{
-			Pomodoros: 18,
-			FocusTime: 7*time.Hour + 30*time.Minute,
-			Streak:    12,
-			ByDay:     [7]int{4, 5, 3, 2, 4, 0, 0},
-		}
+
 		content = dashboard.Render()
 
 	case ViewCalendar:
@@ -423,7 +651,27 @@ func Run(cfg *config.Config) error {
 	}
 	t.Apply()
 
-	app := New(cfg)
+	// Initialize cache
+	c, err := cache.New(cfg.Vault.Path)
+	if err != nil {
+		return fmt.Errorf("failed to initialize cache: %w", err)
+	}
+	defer c.Close()
+
+	// Initialize parser
+	parser := vault.NewParser(cfg.Vault.Path, cfg)
+
+	// Initialize file watcher
+	w, err := watcher.New(cfg.Vault.Path)
+	if err != nil {
+		// Non-fatal: continue without file watching
+		w = nil
+	}
+	if w != nil {
+		defer w.Stop()
+	}
+
+	app := New(cfg, c, parser, w)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	_, err = p.Run()
 	return err
