@@ -9,27 +9,34 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BioWare/lazyobsidian/internal/config"
 	"github.com/BioWare/lazyobsidian/pkg/types"
 )
 
 var (
 	// Regex patterns for parsing markdown
-	taskPattern      = regexp.MustCompile(`^(\s*)-\s*\[([ x\-/>?])\]\s*(.+)$`)
-	wikilinkPattern  = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
-	frontmatterStart = regexp.MustCompile(`^---\s*$`)
-	frontmatterEnd   = regexp.MustCompile(`^---\s*$`)
-	tagPattern       = regexp.MustCompile(`#([a-zA-Z0-9_-]+)`)
+	taskPattern       = regexp.MustCompile(`^(\s*)-\s*\[([ x\-/>?])\]\s*(.+)$`)
+	wikilinkPattern   = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
+	markdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	embedPattern      = regexp.MustCompile(`!\[\[([^\]]+)\]\]`)
+	frontmatterStart  = regexp.MustCompile(`^---\s*$`)
+	tagPattern        = regexp.MustCompile(`#([a-zA-Z0-9_/-]+)`)
+	headingPattern    = regexp.MustCompile(`^(#{1,6})\s+(.+)$`)
+	pomodoroPattern   = regexp.MustCompile(`🍅`)
+	schedulePattern   = regexp.MustCompile(`^-\s*(\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?\s*\|\s*(.+?)(?:\s*\|\s*(.+))?$`)
 )
 
 // Parser handles parsing markdown files from the vault.
 type Parser struct {
 	vaultPath string
+	config    *config.Config
 }
 
 // NewParser creates a new vault parser.
-func NewParser(vaultPath string) *Parser {
+func NewParser(vaultPath string, cfg *config.Config) *Parser {
 	return &Parser{
 		vaultPath: vaultPath,
+		config:    cfg,
 	}
 }
 
@@ -59,8 +66,13 @@ func (p *Parser) ParseFile(path string) (*types.File, error) {
 	scanner := bufio.NewScanner(file)
 	lineNum := 0
 	inFrontmatter := false
+	frontmatterLineCount := 0
 	frontmatterLines := []string{}
 	var contentBuilder strings.Builder
+
+	// For task tree building
+	var taskStack []*types.Task
+	var allTasks []types.Task
 
 	for scanner.Scan() {
 		lineNum++
@@ -69,11 +81,13 @@ func (p *Parser) ParseFile(path string) (*types.File, error) {
 		// Handle frontmatter
 		if lineNum == 1 && frontmatterStart.MatchString(line) {
 			inFrontmatter = true
+			frontmatterLineCount = 1
 			continue
 		}
 
 		if inFrontmatter {
-			if frontmatterEnd.MatchString(line) {
+			frontmatterLineCount++
+			if frontmatterStart.MatchString(line) && frontmatterLineCount > 1 {
 				inFrontmatter = false
 				result.Frontmatter = parseFrontmatter(frontmatterLines)
 				continue
@@ -82,12 +96,16 @@ func (p *Parser) ParseFile(path string) (*types.File, error) {
 			continue
 		}
 
-		// Parse tasks
+		// Parse tasks with indentation for subtasks
 		if matches := taskPattern.FindStringSubmatch(line); matches != nil {
+			indent := len(matches[1])
+			indentLevel := indent / 2 // Assuming 2 spaces per indent level
+
 			task := types.Task{
-				Line:   lineNum,
-				Status: matches[2],
-				Text:   matches[3],
+				Line:     lineNum,
+				Status:   matches[2],
+				Text:     matches[3],
+				Subtasks: []types.Task{},
 			}
 
 			// Check for inline comment
@@ -96,7 +114,65 @@ func (p *Parser) ParseFile(path string) (*types.File, error) {
 				task.Text = strings.TrimSpace(task.Text[:idx])
 			}
 
-			result.Tasks = append(result.Tasks, task)
+			// Check for task note indicator
+			if strings.Contains(task.Text, "📎") {
+				task.HasNote = true
+				task.Text = strings.ReplaceAll(task.Text, "📎", "")
+				task.Text = strings.TrimSpace(task.Text)
+			}
+
+			// Count pomodoros in task text
+			pomodoroCount := len(pomodoroPattern.FindAllString(task.Text, -1))
+			if pomodoroCount > 0 {
+				// Remove pomodoros from text for cleaner display
+				task.Text = strings.TrimSpace(pomodoroPattern.ReplaceAllString(task.Text, ""))
+			}
+
+			// Build task tree
+			if indentLevel == 0 {
+				// Root level task
+				allTasks = append(allTasks, task)
+				taskStack = []*types.Task{&allTasks[len(allTasks)-1]}
+			} else {
+				// Subtask - find parent
+				for len(taskStack) > indentLevel {
+					taskStack = taskStack[:len(taskStack)-1]
+				}
+				if len(taskStack) > 0 {
+					parent := taskStack[len(taskStack)-1]
+					parent.Subtasks = append(parent.Subtasks, task)
+					taskStack = append(taskStack, &parent.Subtasks[len(parent.Subtasks)-1])
+				} else {
+					// No valid parent, add as root
+					allTasks = append(allTasks, task)
+					taskStack = []*types.Task{&allTasks[len(allTasks)-1]}
+				}
+			}
+		}
+
+		// Extract wikilinks
+		for range wikilinkPattern.FindAllStringSubmatch(line, -1) {
+			result.Links = append(result.Links, types.Link{
+				Type: types.LinkTypeWikilink,
+				// TargetID will be resolved later when we have file IDs
+			})
+		}
+
+		// Extract markdown links
+		for _, match := range markdownLinkPattern.FindAllStringSubmatch(line, -1) {
+			if strings.HasPrefix(match[2], "http") {
+				continue // Skip external links
+			}
+			result.Links = append(result.Links, types.Link{
+				Type: types.LinkTypeMarkdown,
+			})
+		}
+
+		// Extract embeds
+		for range embedPattern.FindAllStringSubmatch(line, -1) {
+			result.Links = append(result.Links, types.Link{
+				Type: types.LinkTypeEmbed,
+			})
 		}
 
 		// Extract tags
@@ -111,10 +187,18 @@ func (p *Parser) ParseFile(path string) (*types.File, error) {
 		contentBuilder.WriteString("\n")
 	}
 
+	result.Tasks = allTasks
 	result.Content = contentBuilder.String()
 
 	// Determine file type based on path and frontmatter
 	result.Type = p.determineFileType(path, result.Frontmatter)
+
+	// Extract title from frontmatter or first heading
+	if result.Frontmatter != nil {
+		if title, ok := result.Frontmatter["title"].(string); ok && title != "" {
+			result.Title = title
+		}
+	}
 
 	return result, scanner.Err()
 }
@@ -154,6 +238,35 @@ func (p *Parser) ParseVault() ([]*types.File, error) {
 	return files, err
 }
 
+// ParseDailyNote parses a daily note file for the given date.
+func (p *Parser) ParseDailyNote(date time.Time) (*types.File, error) {
+	folder := p.config.Daily.Folder
+	format := p.config.Daily.FilenameFormat
+	if format == "" {
+		format = "2006-01-02"
+	}
+
+	filename := date.Format(format) + ".md"
+	path := filepath.Join(p.vaultPath, folder, filename)
+
+	return p.ParseFile(path)
+}
+
+// DailyNoteExists checks if a daily note exists for the given date.
+func (p *Parser) DailyNoteExists(date time.Time) bool {
+	folder := p.config.Daily.Folder
+	format := p.config.Daily.FilenameFormat
+	if format == "" {
+		format = "2006-01-02"
+	}
+
+	filename := date.Format(format) + ".md"
+	path := filepath.Join(p.vaultPath, folder, filename)
+
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func (p *Parser) determineFileType(path string, frontmatter map[string]interface{}) types.FileType {
 	// Check frontmatter type field first
 	if frontmatter != nil {
@@ -161,7 +274,7 @@ func (p *Parser) determineFileType(path string, frontmatter map[string]interface
 			switch t {
 			case "daily":
 				return types.FileTypeDaily
-			case "goal", "yearly_plan", "monthly_plan":
+			case "goal", "yearly_plan", "monthly_plan", "weekly_plan":
 				return types.FileTypeGoal
 			case "course":
 				return types.FileTypeCourse
@@ -171,20 +284,98 @@ func (p *Parser) determineFileType(path string, frontmatter map[string]interface
 		}
 	}
 
-	// TODO: Check path against configured folders
+	// Check path against configured folders
+	if p.config != nil {
+		relPath, err := filepath.Rel(p.vaultPath, path)
+		if err == nil {
+			parts := strings.Split(relPath, string(filepath.Separator))
+			if len(parts) > 0 {
+				folder := parts[0]
+				switch folder {
+				case p.config.Folders.Daily, p.config.Daily.Folder:
+					return types.FileTypeDaily
+				case p.config.Folders.Goals:
+					return types.FileTypeGoal
+				case p.config.Folders.Courses:
+					return types.FileTypeCourse
+				case p.config.Folders.Books:
+					return types.FileTypeBook
+				}
+			}
+		}
+	}
+
 	return types.FileTypeNote
 }
 
 func parseFrontmatter(lines []string) map[string]interface{} {
 	result := make(map[string]interface{})
+	var currentKey string
+	var inList bool
+	var listItems []string
 
 	for _, line := range lines {
+		// Check for list item
+		if strings.HasPrefix(strings.TrimSpace(line), "- ") && currentKey != "" {
+			inList = true
+			item := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+			listItems = append(listItems, item)
+			continue
+		}
+
+		// If we were in a list, save it
+		if inList && !strings.HasPrefix(strings.TrimSpace(line), "- ") {
+			result[currentKey] = listItems
+			listItems = nil
+			inList = false
+		}
+
+		// Parse key: value
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
+			currentKey = strings.TrimSpace(parts[0])
 			value := strings.TrimSpace(parts[1])
-			result[key] = value
+
+			if value == "" {
+				// Could be start of list or nested object
+				continue
+			}
+
+			// Handle quoted strings
+			if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+				(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+				value = value[1 : len(value)-1]
+			}
+
+			// Handle arrays like [item1, item2]
+			if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+				inner := value[1 : len(value)-1]
+				items := strings.Split(inner, ",")
+				var cleanItems []string
+				for _, item := range items {
+					cleanItems = append(cleanItems, strings.TrimSpace(item))
+				}
+				result[currentKey] = cleanItems
+				continue
+			}
+
+			// Handle booleans
+			if value == "true" {
+				result[currentKey] = true
+				continue
+			}
+			if value == "false" {
+				result[currentKey] = false
+				continue
+			}
+
+			result[currentKey] = value
 		}
+	}
+
+	// Handle trailing list
+	if inList && currentKey != "" {
+		result[currentKey] = listItems
 	}
 
 	return result
@@ -197,4 +388,28 @@ func containsString(slice []string, str string) bool {
 		}
 	}
 	return false
+}
+
+// CountTasks counts completed and total tasks recursively.
+func CountTasks(tasks []types.Task) (completed, total int) {
+	for _, task := range tasks {
+		total++
+		if task.Status == "x" {
+			completed++
+		}
+		c, t := CountTasks(task.Subtasks)
+		completed += c
+		total += t
+	}
+	return completed, total
+}
+
+// FlattenTasks flattens a task tree into a slice.
+func FlattenTasks(tasks []types.Task) []types.Task {
+	var result []types.Task
+	for _, task := range tasks {
+		result = append(result, task)
+		result = append(result, FlattenTasks(task.Subtasks)...)
+	}
+	return result
 }
