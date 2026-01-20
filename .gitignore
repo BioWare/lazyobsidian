@@ -1,0 +1,52 @@
+# Binaries
+lazyobsidian
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+
+# Local config (user specific)
+config.local.yaml
+
+# SQLite database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+
+# Claude Code
+.claude/
+
+# Spec file (development only)
+lazyobsidian-spec-*.md

@@ -1,0 +1,55 @@
+name: corsair-light
+type: light
+
+colors:
+  # Backgrounds
+  bg_primary: "#F5F0E6"      # Пергамент
+  bg_secondary: "#EDE8DC"    # Карточки
+  bg_tertiary: "#E5DFD3"     # Hover
+  bg_active: "#DDD7C9"       # Selected
+
+  # Borders
+  border_default: "#D4C9B5"
+  border_muted: "#E0D8CA"
+  border_active: "#2D5A7B"
+
+  # Text
+  text_primary: "#3D3428"    # Тёмные чернила
+  text_secondary: "#6B5D4D"
+  text_muted: "#9C8B75"
+  text_inverse: "#F5F0E6"
+
+  # Accents
+  primary: "#2D5A7B"         # Морской синий
+  secondary: "#7B4D2D"       # Красное дерево
+  accent: "#8B6914"          # Старое золото
+
+  # Semantic
+  success: "#4A7C59"
+  warning: "#B8860B"
+  error: "#8B3A3A"
+  info: "#4A708B"
+
+  # Pomodoro
+  pomodoro_work: "#8B3A3A"
+  pomodoro_break: "#4A7C59"
+  pomodoro_paused: "#B8860B"
+
+  # Progress
+  progress_fill: "#2D5A7B"
+  progress_empty: "#D4C9B5"
+
+  # Heatmap
+  heatmap_0: "#EDE8DC"
+  heatmap_1: "#C9D4C5"
+  heatmap_2: "#9BB59A"
+  heatmap_3: "#6D9370"
+  heatmap_4: "#4A7C59"
+
+  # Graph
+  node_default: "#6B5D4D"
+  node_active: "#2D5A7B"
+  node_course: "#7B4D2D"
+  node_goal: "#8B6914"
+  edge_default: "#D4C9B5"
+  edge_active: "#2D5A7B"

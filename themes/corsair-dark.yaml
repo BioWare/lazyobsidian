@@ -1,0 +1,55 @@
+name: corsair-dark
+type: dark
+
+colors:
+  # Backgrounds
+  bg_primary: "#1C1915"
+  bg_secondary: "#2A2520"
+  bg_tertiary: "#3D3630"
+  bg_active: "#4A433B"
+
+  # Borders
+  border_default: "#4A433B"
+  border_muted: "#3D3630"
+  border_active: "#5B8FB9"
+
+  # Text
+  text_primary: "#E8E0D4"
+  text_secondary: "#B8A898"
+  text_muted: "#786858"
+  text_inverse: "#1C1915"
+
+  # Accents
+  primary: "#5B8FB9"
+  secondary: "#C17F59"
+  accent: "#D4A934"
+
+  # Semantic
+  success: "#6B9B6B"
+  warning: "#D4A934"
+  error: "#B85B5B"
+  info: "#5B8FB9"
+
+  # Pomodoro
+  pomodoro_work: "#B85B5B"
+  pomodoro_break: "#6B9B6B"
+  pomodoro_paused: "#D4A934"
+
+  # Progress
+  progress_fill: "#5B8FB9"
+  progress_empty: "#3D3630"
+
+  # Heatmap
+  heatmap_0: "#2A2520"
+  heatmap_1: "#3D4A3D"
+  heatmap_2: "#4A6B4A"
+  heatmap_3: "#5B8B5B"
+  heatmap_4: "#6B9B6B"
+
+  # Graph
+  node_default: "#B8A898"
+  node_active: "#5B8FB9"
+  node_course: "#C17F59"
+  node_goal: "#D4A934"
+  edge_default: "#4A433B"
+  edge_active: "#5B8FB9"
