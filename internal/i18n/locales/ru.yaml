@@ -1,0 +1,111 @@
+language: ru
+name: Русский
+
+nav:
+  dashboard: Главная
+  calendar: Календарь
+  goals: Цели
+  courses: Курсы
+  books: Книги
+  wishlist: Желаемое
+  graph: Граф
+  stats: Статистика
+  settings: Настройки
+
+actions:
+  save: Сохранить
+  cancel: Отмена
+  delete: Удалить
+  edit: Редактировать
+  create: Создать
+  open: Открыть
+  close: Закрыть
+  start: Старт
+  stop: Стоп
+  pause: Пауза
+  resume: Продолжить
+
+pomodoro:
+  work: Работа
+  break: Перерыв
+  short_break: Короткий перерыв
+  long_break: Длинный перерыв
+  ready: Готов
+  running: Идёт
+  paused: Пауза
+  sessions_today: "Сессий сегодня: {count}"
+  daily_goal: "Дневная цель: {current}/{target}"
+  time_left: "{minutes}:{seconds}"
+
+tasks:
+  open: Открыта
+  done: Выполнена
+  cancelled: Отменена
+  in_progress: В процессе
+  deferred: Отложена
+  question: Вопрос
+  progress: "Прогресс: {completed}/{total}"
+  no_tasks: Нет задач
+
+time:
+  minutes: "{n} мин"
+  hours: "{n}ч"
+  days: "{n} дней"
+  days_left: "осталось {n} дней"
+  today: Сегодня
+  yesterday: Вчера
+  tomorrow: Завтра
+
+calendar:
+  year: Год
+  month: Месяц
+  day: День
+  week: Неделя
+  layers:
+    tasks: Задачи
+    goals: Цели
+    journal: Журнал
+    activity: Активность
+
+goals:
+  progress: "Прогресс: {percent}%"
+  due: "Срок: {date}"
+  pace: "Темп: {hours}/день"
+  no_goals: Нет целей
+
+courses:
+  active: Активные
+  completed: Завершённые
+  lessons: "{completed}/{total} уроков"
+  sections: "{count} секций"
+  no_courses: Нет курсов
+
+books:
+  reading: Читаю сейчас
+  completed: Прочитано
+  pages: "с.{current}/{total}"
+  chapters: "{count} глав"
+  no_books: Нет книг
+
+stats:
+  total_focus: Всего времени фокуса
+  total_pomodoros: Всего помодоро
+  tasks_completed: Задач выполнено
+  current_streak: Текущая серия
+  longest_streak: Лучшая серия
+  by_category: По категориям
+
+messages:
+  no_daily_note: "Нет дневной заметки. Нажмите Enter для создания."
+  task_completed: "Задача выполнена!"
+  pomodoro_started: "Помодоро запущен!"
+  pomodoro_completed: "Помодоро завершён!"
+  break_started: "Перерыв начался!"
+  break_completed: "Перерыв завершён!"
+
+help:
+  title: Помощь
+  navigation: Навигация
+  actions: Действия
+  global: Глобальные
+  press_any_key: Нажмите любую клавишу для закрытия

@@ -101,9 +101,13 @@ func (p *Parser) ParseFile(path string) (*types.File, error) {
 			indent := len(matches[1])
 			indentLevel := indent / 2 // Assuming 2 spaces per indent level
 
+			// Convert symbol to named status
+			statusSymbol := matches[2]
+			statusName := p.symbolToStatus(statusSymbol)
+
 			task := types.Task{
 				Line:     lineNum,
-				Status:   matches[2],
+				Status:   statusName,
 				Text:     matches[3],
 				Subtasks: []types.Task{},
 			}
@@ -390,11 +394,71 @@ func containsString(slice []string, str string) bool {
 	return false
 }
 
+// symbolToStatus converts a task status symbol to its named status.
+func (p *Parser) symbolToStatus(symbol string) string {
+	// Check config for custom statuses first
+	if p.config != nil {
+		for _, status := range p.config.Tasks.Statuses {
+			if status.Symbol == symbol {
+				return status.Name
+			}
+		}
+	}
+
+	// Fallback to default mapping
+	switch symbol {
+	case " ":
+		return "open"
+	case "x":
+		return "done"
+	case "-":
+		return "cancelled"
+	case "/":
+		return "in_progress"
+	case ">":
+		return "deferred"
+	case "?":
+		return "question"
+	default:
+		return "open"
+	}
+}
+
+// statusToSymbol converts a named status to its symbol.
+func (p *Parser) statusToSymbol(status string) string {
+	// Check config for custom statuses first
+	if p.config != nil {
+		for _, s := range p.config.Tasks.Statuses {
+			if s.Name == status {
+				return s.Symbol
+			}
+		}
+	}
+
+	// Fallback to default mapping
+	switch status {
+	case "open":
+		return " "
+	case "done":
+		return "x"
+	case "cancelled":
+		return "-"
+	case "in_progress":
+		return "/"
+	case "deferred":
+		return ">"
+	case "question":
+		return "?"
+	default:
+		return " "
+	}
+}
+
 // CountTasks counts completed and total tasks recursively.
 func CountTasks(tasks []types.Task) (completed, total int) {
 	for _, task := range tasks {
 		total++
-		if task.Status == "x" {
+		if task.Status == "done" {
 			completed++
 		}
 		c, t := CountTasks(task.Subtasks)
@@ -412,4 +476,163 @@ func FlattenTasks(tasks []types.Task) []types.Task {
 		result = append(result, FlattenTasks(task.Subtasks)...)
 	}
 	return result
+}
+
+// ParseGoals parses goal files from the Goals folder.
+func (p *Parser) ParseGoals() ([]types.Goal, error) {
+	goalsFolder := p.config.Folders.Goals
+	if goalsFolder == "" {
+		goalsFolder = "Goals"
+	}
+
+	goalsPath := filepath.Join(p.vaultPath, goalsFolder)
+
+	var goals []types.Goal
+
+	err := filepath.Walk(goalsPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+
+		file, err := p.ParseFile(path)
+		if err != nil {
+			return nil
+		}
+
+		goal := types.Goal{
+			Title:       file.Title,
+			Description: "",
+			Progress:    0,
+			Children:    []types.Goal{},
+		}
+
+		// Extract description from frontmatter
+		if file.Frontmatter != nil {
+			if desc, ok := file.Frontmatter["description"].(string); ok {
+				goal.Description = desc
+			}
+			if progress, ok := file.Frontmatter["progress"].(float64); ok {
+				goal.Progress = progress
+			}
+			if due, ok := file.Frontmatter["due"].(string); ok {
+				if t, err := time.Parse("2006-01-02", due); err == nil {
+					goal.DueDate = &t
+				}
+			}
+		}
+
+		// Calculate progress from tasks if not set
+		if goal.Progress == 0 && len(file.Tasks) > 0 {
+			completed, total := CountTasks(file.Tasks)
+			if total > 0 {
+				goal.Progress = float64(completed) / float64(total)
+			}
+		}
+
+		goals = append(goals, goal)
+		return nil
+	})
+
+	return goals, err
+}
+
+// ParseCourses parses course files from the Courses folder.
+func (p *Parser) ParseCourses() ([]types.Course, error) {
+	coursesFolder := p.config.Folders.Courses
+	if coursesFolder == "" {
+		coursesFolder = "Courses"
+	}
+
+	coursesPath := filepath.Join(p.vaultPath, coursesFolder)
+
+	var courses []types.Course
+
+	err := filepath.Walk(coursesPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+
+		file, err := p.ParseFile(path)
+		if err != nil {
+			return nil
+		}
+
+		course := types.Course{
+			Title:    file.Title,
+			Sections: []types.CourseSection{},
+		}
+
+		// Extract from frontmatter
+		if file.Frontmatter != nil {
+			if source, ok := file.Frontmatter["source"].(string); ok {
+				course.Source = source
+			}
+			if url, ok := file.Frontmatter["url"].(string); ok {
+				course.URL = url
+			}
+			if total, ok := file.Frontmatter["total_lessons"].(int); ok {
+				course.TotalLessons = total
+			}
+		}
+
+		// Calculate progress from tasks
+		if len(file.Tasks) > 0 {
+			completed, total := CountTasks(file.Tasks)
+			course.Completed = completed
+			if course.TotalLessons == 0 {
+				course.TotalLessons = total
+			}
+		}
+
+		courses = append(courses, course)
+		return nil
+	})
+
+	return courses, err
+}
+
+// ParseBooks parses book files from the Books folder.
+func (p *Parser) ParseBooks() ([]types.Book, error) {
+	booksFolder := p.config.Folders.Books
+	if booksFolder == "" {
+		booksFolder = "Books"
+	}
+
+	booksPath := filepath.Join(p.vaultPath, booksFolder)
+
+	var books []types.Book
+
+	err := filepath.Walk(booksPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+
+		file, err := p.ParseFile(path)
+		if err != nil {
+			return nil
+		}
+
+		book := types.Book{
+			Title:    file.Title,
+			Chapters: []types.BookChapter{},
+		}
+
+		// Extract from frontmatter
+		if file.Frontmatter != nil {
+			if author, ok := file.Frontmatter["author"].(string); ok {
+				book.Author = author
+			}
+			if currentPage, ok := file.Frontmatter["current_page"].(int); ok {
+				book.CurrentPage = currentPage
+			}
+			if totalPages, ok := file.Frontmatter["total_pages"].(int); ok {
+				book.TotalPages = totalPages
+			}
+		}
+
+		books = append(books, book)
+		return nil
+	})
+
+	return books, err
 }

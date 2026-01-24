@@ -9,6 +9,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/BioWare/lazyobsidian/internal/ui/components"
+	"github.com/BioWare/lazyobsidian/internal/ui/icons"
+	"github.com/BioWare/lazyobsidian/internal/ui/layout"
+	"github.com/BioWare/lazyobsidian/internal/ui/theme"
 	"github.com/BioWare/lazyobsidian/pkg/types"
 )
 
@@ -18,32 +21,33 @@ type Dashboard struct {
 	Height int
 
 	// Data
-	Tasks          []types.Task
-	ActiveCourses  []types.Course
-	CurrentBook    *types.Book
-	PomodoroState  PomodoroState
-	WeeklyStats    WeeklyStats
-	RecentNotes    []RecentNote
+	Tasks         []types.Task
+	ActiveCourses []types.Course
+	CurrentBook   *types.Book
+	PomodoroState PomodoroState
+	WeeklyStats   WeeklyStats
+	RecentNotes   []RecentNote
 
 	// Focus state
 	FocusedModule int
+	SelectedTask  int
 }
 
 // PomodoroState holds current pomodoro state for display.
 type PomodoroState struct {
-	State       string // "ready", "running", "paused", "break"
-	Remaining   time.Duration
-	DailyGoal   int
-	DailyDone   int
-	Context     string
+	State     string // "ready", "running", "paused", "break"
+	Remaining time.Duration
+	DailyGoal int
+	DailyDone int
+	Context   string
 }
 
 // WeeklyStats holds weekly statistics.
 type WeeklyStats struct {
-	Pomodoros    int
-	FocusTime    time.Duration
-	Streak       int
-	ByDay        [7]int // Mon-Sun
+	Pomodoros int
+	FocusTime time.Duration
+	Streak    int
+	ByDay     [7]int // Mon-Sun
 }
 
 // RecentNote represents a recently modified note.
@@ -53,6 +57,16 @@ type RecentNote struct {
 	Modified time.Time
 }
 
+// DashboardModule constants
+const (
+	ModuleTodayFocus = iota
+	ModulePomodoro
+	ModuleWeekStats
+	ModuleCourses
+	ModuleBook
+	ModuleRecentNotes
+)
+
 // NewDashboard creates a new dashboard view.
 func NewDashboard(width, height int) *Dashboard {
 	return &Dashboard{
@@ -61,266 +75,482 @@ func NewDashboard(width, height int) *Dashboard {
 	}
 }
 
-// Render renders the dashboard.
+// Render renders the dashboard using the Frame-based layout system.
 func (d *Dashboard) Render() string {
-	// Calculate module dimensions
-	leftWidth := d.Width * 55 / 100
-	rightWidth := d.Width - leftWidth - 3
+	if d.Width <= 0 || d.Height <= 0 {
+		return ""
+	}
 
-	// Top section: Today's Focus
-	todayFocus := d.renderTodayFocus(d.Width-4, 10)
+	// Calculate section heights
+	// Today's Focus: ~35% of height (min 8 lines)
+	// Pomodoro/Week: ~25% of height (min 7 lines)
+	// Courses/Book: ~20% of height (min 6 lines)
+	// Recent Notes: remaining space
 
-	// Middle section: Pomodoro + This Week
-	pomodoroWidth := leftWidth
-	weekWidth := rightWidth
-	pomodoro := d.renderPomodoro(pomodoroWidth, 6)
-	week := d.renderWeekStats(weekWidth, 6)
-	middleRow := lipgloss.JoinHorizontal(lipgloss.Top, pomodoro, "  ", week)
+	todayHeight := max(8, d.Height*35/100)
+	middleHeight := max(7, d.Height*25/100)
+	bottomHeight := max(6, d.Height*20/100)
+	recentHeight := d.Height - todayHeight - middleHeight - bottomHeight
 
-	// Bottom section: Active Courses + Current Book
-	courses := d.renderActiveCourses(leftWidth, 5)
-	book := d.renderCurrentBook(rightWidth, 5)
-	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, courses, "  ", book)
+	if recentHeight < 4 {
+		// Redistribute if Recent Notes is too small
+		recentHeight = 4
+		todayHeight = d.Height - middleHeight - bottomHeight - recentHeight
+	}
 
-	// Recent Notes
-	recentNotes := d.renderRecentNotes(d.Width-4, 4)
+	var sections []string
 
-	// Join all sections
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		todayFocus,
-		"",
-		middleRow,
-		"",
-		bottomRow,
-		"",
-		recentNotes,
-	)
+	// Section 1: Today's Focus (full width)
+	todayFocus := d.renderTodayFocus(d.Width, todayHeight)
+	sections = append(sections, todayFocus)
 
-	return content
+	// Section 2: Pomodoro + This Week (side by side)
+	leftWidth := d.Width * 40 / 100
+	rightWidth := d.Width - leftWidth
+
+	pomodoro := d.renderPomodoro(leftWidth, middleHeight)
+	weekStats := d.renderWeekStats(rightWidth, middleHeight)
+	middleRow := lipgloss.JoinHorizontal(lipgloss.Top, pomodoro, weekStats)
+	sections = append(sections, middleRow)
+
+	// Section 3: Active Courses + Current Book (side by side)
+	courses := d.renderCourses(leftWidth, bottomHeight)
+	book := d.renderBook(rightWidth, bottomHeight)
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, courses, book)
+	sections = append(sections, bottomRow)
+
+	// Section 4: Recent Notes (full width)
+	recent := d.renderRecentNotes(d.Width, recentHeight)
+	sections = append(sections, recent)
+
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
+// renderTodayFocus renders the Today's Focus panel.
 func (d *Dashboard) renderTodayFocus(width, height int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#3D3428"))
-	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4C9B5"))
+	frame := layout.NewFrame(width, height)
+	frame.SetTitle("Today's Focus")
+	frame.SetBorder(layout.BorderRounded)
+
+	if theme.Current != nil {
+		frame.SetColors(
+			theme.Current.Color("border_default"),
+			theme.Current.Color("border_active"),
+			theme.Current.Color("text_primary"),
+			theme.Current.Color("bg_primary"),
+		)
+	}
+
+	if d.FocusedModule == ModuleTodayFocus {
+		frame.SetFocused(true)
+	}
+
+	contentWidth := frame.ContentWidth()
+	contentHeight := frame.ContentHeight()
 
 	var lines []string
-	lines = append(lines, borderStyle.Render("┌─ ")+titleStyle.Render("Today's Focus")+" "+borderStyle.Render(strings.Repeat("─", width-18)+"┐"))
 
 	if len(d.Tasks) == 0 {
-		emptyMsg := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#9C8B75")).
-			Render("No daily note. Press Enter to create.")
-		lines = append(lines, borderStyle.Render("│ ")+emptyMsg+strings.Repeat(" ", width-len(emptyMsg)-4)+borderStyle.Render(" │"))
+		emptyStyle := lipgloss.NewStyle().Foreground(theme.Current.Color("text_muted"))
+		emptyMsg := emptyStyle.Render("No daily note. Press Enter to create.")
+		lines = append(lines, layout.PadCenter(emptyMsg, contentWidth))
 	} else {
-		taskList := components.NewTaskList(d.Tasks, width-4, height-4)
-		taskContent := taskList.Render()
-		for _, line := range strings.Split(taskContent, "\n") {
-			paddedLine := line + strings.Repeat(" ", max(0, width-len(line)-4))
-			lines = append(lines, borderStyle.Render("│ ")+paddedLine+borderStyle.Render(" │"))
+		// Render tasks
+		maxTasks := contentHeight - 2 // Leave room for progress bar
+		for i, task := range d.Tasks {
+			if i >= maxTasks {
+				break
+			}
+
+			line := d.renderTaskLine(task, i == d.SelectedTask && d.FocusedModule == ModuleTodayFocus, contentWidth)
+			lines = append(lines, line)
+		}
+
+		// Pad remaining lines
+		for len(lines) < maxTasks {
+			lines = append(lines, strings.Repeat(" ", contentWidth))
 		}
 
 		// Progress bar
-		completed, total := taskList.Progress()
+		completed, total := countTaskProgress(d.Tasks)
 		progress := float64(0)
 		if total > 0 {
 			progress = float64(completed) / float64(total)
 		}
-		progressBar := components.NewProgressBar(width-20, progress)
+		progressBar := components.NewProgressBar(contentWidth-20, progress)
 		progressLine := fmt.Sprintf("Progress: %s %d/%d", progressBar.Render(), completed, total)
-		lines = append(lines, borderStyle.Render("│ ")+progressLine+strings.Repeat(" ", max(0, width-len(progressLine)-4))+borderStyle.Render(" │"))
+		lines = append(lines, layout.FitToWidth(progressLine, contentWidth))
 	}
 
-	// Pad remaining height
-	for len(lines) < height-1 {
-		lines = append(lines, borderStyle.Render("│")+strings.Repeat(" ", width-2)+borderStyle.Render("│"))
-	}
-
-	lines = append(lines, borderStyle.Render("└"+strings.Repeat("─", width-2)+"┘"))
-
-	return strings.Join(lines, "\n")
+	frame.SetContentLines(lines)
+	return frame.Render()
 }
 
-func (d *Dashboard) renderPomodoro(width, height int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true)
-	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4C9B5"))
+// renderTaskLine renders a single task line.
+func (d *Dashboard) renderTaskLine(task types.Task, selected bool, width int) string {
+	// Get icon for status
+	var icon string
+	var style lipgloss.Style
 
+	switch task.Status {
+	case "done":
+		icon = icons.Get("task_done")
+		style = theme.S.TaskDone
+	case "cancelled":
+		icon = icons.Get("task_cancelled")
+		style = theme.S.TaskCancelled
+	case "in_progress":
+		icon = icons.Get("task_in_progress")
+		style = theme.S.TaskInProgress
+	case "deferred":
+		icon = icons.Get("task_deferred")
+		style = theme.S.TaskDeferred
+	case "question":
+		icon = icons.Get("task_question")
+		style = theme.S.TaskQuestion
+	default:
+		icon = icons.Get("task_open")
+		style = theme.S.TaskOpen
+	}
+
+	// Build task text
+	text := task.Text
+	iconWidth := lipgloss.Width(icon) + 1 // icon + space
+	maxTextWidth := width - iconWidth - 2  // padding
+
+	if lipgloss.Width(text) > maxTextWidth {
+		text = layout.TruncateWithEllipsis(text, maxTextWidth)
+	}
+
+	content := icon + " " + style.Render(text)
+
+	if selected {
+		// Highlight selected task
+		bgStyle := lipgloss.NewStyle().
+			Background(theme.Current.Color("bg_active")).
+			Bold(true)
+		content = bgStyle.Render(layout.FitToWidth(content, width))
+	}
+
+	return layout.FitToWidth(content, width)
+}
+
+// renderPomodoro renders the Pomodoro panel.
+func (d *Dashboard) renderPomodoro(width, height int) string {
+	frame := layout.NewFrame(width, height)
+	frame.SetTitle("Pomodoro")
+	frame.SetBorder(layout.BorderRounded)
+
+	if theme.Current != nil {
+		frame.SetColors(
+			theme.Current.Color("border_default"),
+			theme.Current.Color("border_active"),
+			theme.Current.Color("text_primary"),
+			theme.Current.Color("bg_primary"),
+		)
+	}
+
+	if d.FocusedModule == ModulePomodoro {
+		frame.SetFocused(true)
+	}
+
+	contentWidth := frame.ContentWidth()
 	var lines []string
-	lines = append(lines, borderStyle.Render("┌─ ")+titleStyle.Render("Pomodoro")+" "+borderStyle.Render(strings.Repeat("─", width-14)+"┐"))
 
 	// Timer display
 	timerStyle := lipgloss.NewStyle().Bold(true)
-	if d.PomodoroState.State == "running" {
-		timerStyle = timerStyle.Foreground(lipgloss.Color("#8B3A3A"))
-	} else if d.PomodoroState.State == "break" {
-		timerStyle = timerStyle.Foreground(lipgloss.Color("#4A7C59"))
+	switch d.PomodoroState.State {
+	case "running":
+		timerStyle = timerStyle.Foreground(theme.Current.Color("pomodoro_work"))
+	case "break":
+		timerStyle = timerStyle.Foreground(theme.Current.Color("pomodoro_break"))
+	case "paused":
+		timerStyle = timerStyle.Foreground(theme.Current.Color("pomodoro_paused"))
+	default:
+		timerStyle = timerStyle.Foreground(theme.Current.Color("text_primary"))
 	}
 
 	minutes := int(d.PomodoroState.Remaining.Minutes())
 	seconds := int(d.PomodoroState.Remaining.Seconds()) % 60
 	timerText := fmt.Sprintf("%02d:%02d", minutes, seconds)
 
-	stateText := "[" + strings.Title(d.PomodoroState.State) + "]"
-	timerLine := fmt.Sprintf("      %s  %s", timerStyle.Render(timerText), stateText)
-	lines = append(lines, borderStyle.Render("│ ")+timerLine+strings.Repeat(" ", max(0, width-len(timerLine)-4))+borderStyle.Render(" │"))
+	stateStyle := lipgloss.NewStyle().Foreground(theme.Current.Color("text_secondary"))
+	stateText := "[" + capitalizeFirst(d.PomodoroState.State) + "]"
 
-	// Daily goal
-	goalText := fmt.Sprintf("Daily: %d/%d 🍅", d.PomodoroState.DailyDone, d.PomodoroState.DailyGoal)
-	lines = append(lines, borderStyle.Render("│ ")+goalText+strings.Repeat(" ", max(0, width-len(goalText)-4))+borderStyle.Render(" │"))
+	pomIcon := icons.Get("pomodoro_work")
+	timerLine := fmt.Sprintf(" %s  %s  %s", pomIcon, timerStyle.Render(timerText), stateStyle.Render(stateText))
+	lines = append(lines, layout.FitToWidth(timerLine, contentWidth))
 
-	// Pad and close
-	for len(lines) < height-1 {
-		lines = append(lines, borderStyle.Render("│")+strings.Repeat(" ", width-2)+borderStyle.Render("│"))
+	// Daily goal progress
+	goalStyle := lipgloss.NewStyle().Foreground(theme.Current.Color("text_secondary"))
+	goalText := fmt.Sprintf(" Daily: %d/%d", d.PomodoroState.DailyDone, d.PomodoroState.DailyGoal)
+	lines = append(lines, layout.FitToWidth(goalStyle.Render(goalText), contentWidth))
+
+	// Context if set
+	if d.PomodoroState.Context != "" {
+		ctxStyle := lipgloss.NewStyle().
+			Foreground(theme.Current.Color("text_muted")).
+			Italic(true)
+		ctxText := " " + d.PomodoroState.Context
+		lines = append(lines, layout.FitToWidth(ctxStyle.Render(ctxText), contentWidth))
 	}
-	lines = append(lines, borderStyle.Render("└"+strings.Repeat("─", width-2)+"┘"))
 
-	return strings.Join(lines, "\n")
+	frame.SetContentLines(lines)
+	return frame.Render()
 }
 
+// renderWeekStats renders the This Week stats panel.
 func (d *Dashboard) renderWeekStats(width, height int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true)
-	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4C9B5"))
+	frame := layout.NewFrame(width, height)
+	frame.SetTitle("This Week")
+	frame.SetBorder(layout.BorderRounded)
 
+	if theme.Current != nil {
+		frame.SetColors(
+			theme.Current.Color("border_default"),
+			theme.Current.Color("border_active"),
+			theme.Current.Color("text_primary"),
+			theme.Current.Color("bg_primary"),
+		)
+	}
+
+	if d.FocusedModule == ModuleWeekStats {
+		frame.SetFocused(true)
+	}
+
+	contentWidth := frame.ContentWidth()
 	var lines []string
-	lines = append(lines, borderStyle.Render("┌─ ")+titleStyle.Render("This Week")+" "+borderStyle.Render(strings.Repeat("─", width-15)+"┐"))
 
 	// Day labels
-	dayLabels := "Mo Tu We Th Fr Sa Su"
-	lines = append(lines, borderStyle.Render("│ ")+dayLabels+strings.Repeat(" ", max(0, width-len(dayLabels)-4))+borderStyle.Render(" │"))
+	labelStyle := lipgloss.NewStyle().Foreground(theme.Current.Color("text_secondary"))
+	lines = append(lines, layout.FitToWidth(labelStyle.Render(" Mo Tu We Th Fr Sa Su"), contentWidth))
 
-	// Activity bars
+	// Activity heatmap
 	var bars []string
 	for _, count := range d.WeeklyStats.ByDay {
 		bar := "░░"
+		barStyle := theme.S.HeatmapLevel0
 		if count >= 5 {
 			bar = "██"
+			barStyle = theme.S.HeatmapLevel4
 		} else if count >= 3 {
 			bar = "▓▓"
+			barStyle = theme.S.HeatmapLevel3
 		} else if count >= 1 {
 			bar = "▒▒"
+			barStyle = theme.S.HeatmapLevel1
 		}
-		bars = append(bars, bar)
+		bars = append(bars, barStyle.Render(bar))
 	}
-	barsLine := strings.Join(bars, " ")
-	lines = append(lines, borderStyle.Render("│ ")+barsLine+strings.Repeat(" ", max(0, width-len(barsLine)-4))+borderStyle.Render(" │"))
+	heatmapLine := " " + strings.Join(bars, " ")
+	lines = append(lines, layout.FitToWidth(heatmapLine, contentWidth))
 
 	// Summary
 	focusHours := d.WeeklyStats.FocusTime.Hours()
-	summaryText := fmt.Sprintf("%d🍅 • %.1fh • 🔥%d", d.WeeklyStats.Pomodoros, focusHours, d.WeeklyStats.Streak)
-	lines = append(lines, borderStyle.Render("│ ")+summaryText+strings.Repeat(" ", max(0, width-len(summaryText)-4))+borderStyle.Render(" │"))
-
-	// Pad and close
-	for len(lines) < height-1 {
-		lines = append(lines, borderStyle.Render("│")+strings.Repeat(" ", width-2)+borderStyle.Render("│"))
+	summaryStyle := lipgloss.NewStyle().Foreground(theme.Current.Color("text_primary"))
+	summaryText := fmt.Sprintf(" %d pom • %.1fh", d.WeeklyStats.Pomodoros, focusHours)
+	if d.WeeklyStats.Streak > 0 {
+		streakIcon := icons.Get("fire")
+		summaryText += fmt.Sprintf(" • %s%d", streakIcon, d.WeeklyStats.Streak)
 	}
-	lines = append(lines, borderStyle.Render("└"+strings.Repeat("─", width-2)+"┘"))
+	lines = append(lines, layout.FitToWidth(summaryStyle.Render(summaryText), contentWidth))
 
-	return strings.Join(lines, "\n")
+	frame.SetContentLines(lines)
+	return frame.Render()
 }
 
-func (d *Dashboard) renderActiveCourses(width, height int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true)
-	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4C9B5"))
+// renderCourses renders the Active Courses panel.
+func (d *Dashboard) renderCourses(width, height int) string {
+	frame := layout.NewFrame(width, height)
+	frame.SetTitle("Active Courses")
+	frame.SetBorder(layout.BorderRounded)
 
+	if theme.Current != nil {
+		frame.SetColors(
+			theme.Current.Color("border_default"),
+			theme.Current.Color("border_active"),
+			theme.Current.Color("text_primary"),
+			theme.Current.Color("bg_primary"),
+		)
+	}
+
+	if d.FocusedModule == ModuleCourses {
+		frame.SetFocused(true)
+	}
+
+	contentWidth := frame.ContentWidth()
+	contentHeight := frame.ContentHeight()
 	var lines []string
-	lines = append(lines, borderStyle.Render("┌─ ")+titleStyle.Render("Active Courses")+" "+borderStyle.Render(strings.Repeat("─", width-19)+"┐"))
 
 	if len(d.ActiveCourses) == 0 {
-		lines = append(lines, borderStyle.Render("│ ")+"No active courses"+strings.Repeat(" ", max(0, width-21))+borderStyle.Render(" │"))
+		emptyStyle := lipgloss.NewStyle().Foreground(theme.Current.Color("text_muted"))
+		lines = append(lines, layout.FitToWidth(emptyStyle.Render(" No active courses"), contentWidth))
 	} else {
 		for i, course := range d.ActiveCourses {
-			if i >= height-3 {
+			if i >= contentHeight {
 				break
 			}
-			progress := float64(course.Completed) / float64(course.TotalLessons)
+
+			progress := float64(0)
+			if course.TotalLessons > 0 {
+				progress = float64(course.Completed) / float64(course.TotalLessons)
+			}
 			progressBar := components.NewProgressBar(10, progress)
 			progressBar.ShowLabel = false
 
 			title := course.Title
-			if len(title) > width-20 {
-				title = title[:width-23] + "..."
+			progressWidth := lipgloss.Width(progressBar.Render()) + 5 // " XX%"
+			maxTitleLen := contentWidth - progressWidth - 2
+
+			if lipgloss.Width(title) > maxTitleLen {
+				title = layout.TruncateWithEllipsis(title, maxTitleLen)
 			}
 
-			line := fmt.Sprintf("%s %s %d%%", title, progressBar.Render(), int(progress*100))
-			lines = append(lines, borderStyle.Render("│ ")+line+strings.Repeat(" ", max(0, width-len(line)-4))+borderStyle.Render(" │"))
+			courseIcon := icons.Get("course")
+			line := fmt.Sprintf(" %s %s %s %d%%",
+				courseIcon,
+				layout.PadRight(title, maxTitleLen),
+				progressBar.Render(),
+				int(progress*100))
+			lines = append(lines, layout.FitToWidth(line, contentWidth))
 		}
 	}
 
-	// Pad and close
-	for len(lines) < height-1 {
-		lines = append(lines, borderStyle.Render("│")+strings.Repeat(" ", width-2)+borderStyle.Render("│"))
-	}
-	lines = append(lines, borderStyle.Render("└"+strings.Repeat("─", width-2)+"┘"))
-
-	return strings.Join(lines, "\n")
+	frame.SetContentLines(lines)
+	return frame.Render()
 }
 
-func (d *Dashboard) renderCurrentBook(width, height int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true)
-	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4C9B5"))
+// renderBook renders the Current Book panel.
+func (d *Dashboard) renderBook(width, height int) string {
+	frame := layout.NewFrame(width, height)
+	frame.SetTitle("Current Book")
+	frame.SetBorder(layout.BorderRounded)
 
+	if theme.Current != nil {
+		frame.SetColors(
+			theme.Current.Color("border_default"),
+			theme.Current.Color("border_active"),
+			theme.Current.Color("text_primary"),
+			theme.Current.Color("bg_primary"),
+		)
+	}
+
+	if d.FocusedModule == ModuleBook {
+		frame.SetFocused(true)
+	}
+
+	contentWidth := frame.ContentWidth()
 	var lines []string
-	lines = append(lines, borderStyle.Render("┌─ ")+titleStyle.Render("Current Book")+" "+borderStyle.Render(strings.Repeat("─", width-17)+"┐"))
 
 	if d.CurrentBook == nil {
-		lines = append(lines, borderStyle.Render("│ ")+"No book in progress"+strings.Repeat(" ", max(0, width-23))+borderStyle.Render(" │"))
+		emptyStyle := lipgloss.NewStyle().Foreground(theme.Current.Color("text_muted"))
+		lines = append(lines, layout.FitToWidth(emptyStyle.Render(" No book in progress"), contentWidth))
 	} else {
-		progress := float64(d.CurrentBook.CurrentPage) / float64(d.CurrentBook.TotalPages)
-		progressBar := components.NewProgressBar(10, progress)
+		progress := float64(0)
+		if d.CurrentBook.TotalPages > 0 {
+			progress = float64(d.CurrentBook.CurrentPage) / float64(d.CurrentBook.TotalPages)
+		}
+		progressBar := components.NewProgressBar(12, progress)
 		progressBar.ShowLabel = false
 
+		// Book title
+		bookIcon := icons.Get("book")
 		title := d.CurrentBook.Title
-		if len(title) > width-6 {
-			title = title[:width-9] + "..."
+		maxTitleLen := contentWidth - 4
+		if lipgloss.Width(title) > maxTitleLen {
+			title = layout.TruncateWithEllipsis(title, maxTitleLen)
+		}
+		titleStyle := theme.S.BookTitle
+		lines = append(lines, layout.FitToWidth(fmt.Sprintf(" %s %s", bookIcon, titleStyle.Render(title)), contentWidth))
+
+		// Author if present
+		if d.CurrentBook.Author != "" {
+			authorStyle := theme.S.BookAuthor
+			author := "   by " + d.CurrentBook.Author
+			if lipgloss.Width(author) > contentWidth {
+				author = layout.TruncateWithEllipsis(author, contentWidth)
+			}
+			lines = append(lines, layout.FitToWidth(authorStyle.Render(author), contentWidth))
 		}
 
-		line1 := fmt.Sprintf("%s %s %d%%", title, progressBar.Render(), int(progress*100))
-		lines = append(lines, borderStyle.Render("│ ")+line1+strings.Repeat(" ", max(0, width-len(line1)-4))+borderStyle.Render(" │"))
-
-		line2 := fmt.Sprintf("p.%d/%d", d.CurrentBook.CurrentPage, d.CurrentBook.TotalPages)
-		lines = append(lines, borderStyle.Render("│ ")+line2+strings.Repeat(" ", max(0, width-len(line2)-4))+borderStyle.Render(" │"))
+		// Progress
+		progressLine := fmt.Sprintf(" %s %d%% • p.%d/%d",
+			progressBar.Render(),
+			int(progress*100),
+			d.CurrentBook.CurrentPage,
+			d.CurrentBook.TotalPages)
+		lines = append(lines, layout.FitToWidth(progressLine, contentWidth))
 	}
 
-	// Pad and close
-	for len(lines) < height-1 {
-		lines = append(lines, borderStyle.Render("│")+strings.Repeat(" ", width-2)+borderStyle.Render("│"))
-	}
-	lines = append(lines, borderStyle.Render("└"+strings.Repeat("─", width-2)+"┘"))
-
-	return strings.Join(lines, "\n")
+	frame.SetContentLines(lines)
+	return frame.Render()
 }
 
+// renderRecentNotes renders the Recent Notes panel.
 func (d *Dashboard) renderRecentNotes(width, height int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true)
-	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4C9B5"))
+	frame := layout.NewFrame(width, height)
+	frame.SetTitle("Recent Notes")
+	frame.SetBorder(layout.BorderRounded)
 
+	if theme.Current != nil {
+		frame.SetColors(
+			theme.Current.Color("border_default"),
+			theme.Current.Color("border_active"),
+			theme.Current.Color("text_primary"),
+			theme.Current.Color("bg_primary"),
+		)
+	}
+
+	if d.FocusedModule == ModuleRecentNotes {
+		frame.SetFocused(true)
+	}
+
+	contentWidth := frame.ContentWidth()
+	contentHeight := frame.ContentHeight()
 	var lines []string
-	lines = append(lines, borderStyle.Render("┌─ ")+titleStyle.Render("Recent Notes")+" "+borderStyle.Render(strings.Repeat("─", width-17)+"┐"))
 
 	if len(d.RecentNotes) == 0 {
-		lines = append(lines, borderStyle.Render("│ ")+"No recent notes"+strings.Repeat(" ", max(0, width-19))+borderStyle.Render(" │"))
+		emptyStyle := lipgloss.NewStyle().Foreground(theme.Current.Color("text_muted"))
+		lines = append(lines, layout.FitToWidth(emptyStyle.Render(" No recent notes"), contentWidth))
 	} else {
 		for i, note := range d.RecentNotes {
-			if i >= height-2 {
+			if i >= contentHeight {
 				break
 			}
+
 			timeAgo := formatTimeAgo(note.Modified)
+			timeStyle := lipgloss.NewStyle().Foreground(theme.Current.Color("text_muted"))
+
+			noteIcon := icons.Get("note")
 			title := note.Title
-			maxTitleLen := width - len(timeAgo) - 8
-			if len(title) > maxTitleLen {
-				title = title[:maxTitleLen-3] + "..."
+			timeWidth := lipgloss.Width(timeAgo) + 3
+			maxTitleLen := contentWidth - timeWidth - 4
+
+			if lipgloss.Width(title) > maxTitleLen {
+				title = layout.TruncateWithEllipsis(title, maxTitleLen)
 			}
-			line := title + strings.Repeat(" ", max(0, maxTitleLen-len(title))) + "  " + timeAgo
-			lines = append(lines, borderStyle.Render("│ ")+line+borderStyle.Render(" │"))
+
+			// Pad title to align time
+			titlePadded := layout.PadRight(title, maxTitleLen)
+			line := fmt.Sprintf(" %s %s  %s", noteIcon, titlePadded, timeStyle.Render(timeAgo))
+			lines = append(lines, layout.FitToWidth(line, contentWidth))
 		}
 	}
 
-	// Pad and close
-	for len(lines) < height-1 {
-		lines = append(lines, borderStyle.Render("│")+strings.Repeat(" ", width-2)+borderStyle.Render("│"))
-	}
-	lines = append(lines, borderStyle.Render("└"+strings.Repeat("─", width-2)+"┘"))
+	frame.SetContentLines(lines)
+	return frame.Render()
+}
 
-	return strings.Join(lines, "\n")
+// Helper functions
+
+func countTaskProgress(tasks []types.Task) (completed, total int) {
+	for _, t := range tasks {
+		total++
+		if t.Status == "done" {
+			completed++
+		}
+	}
+	return
 }
 
 func formatTimeAgo(t time.Time) string {
@@ -334,9 +564,22 @@ func formatTimeAgo(t time.Time) string {
 	return fmt.Sprintf("%dd ago", int(diff.Hours()/24))
 }
 
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
+}
+
+// truncateToWidth truncates a string to fit within maxWidth.
+// Delegates to layout.TruncateToWidth for consistent handling.
+func truncateToWidth(s string, maxWidth int) string {
+	return layout.TruncateToWidth(s, maxWidth)
 }

@@ -1,0 +1,111 @@
+language: en
+name: English
+
+nav:
+  dashboard: Dashboard
+  calendar: Calendar
+  goals: Goals
+  courses: Courses
+  books: Books
+  wishlist: Wishlist
+  graph: Graph
+  stats: Statistics
+  settings: Settings
+
+actions:
+  save: Save
+  cancel: Cancel
+  delete: Delete
+  edit: Edit
+  create: Create
+  open: Open
+  close: Close
+  start: Start
+  stop: Stop
+  pause: Pause
+  resume: Resume
+
+pomodoro:
+  work: Work
+  break: Break
+  short_break: Short Break
+  long_break: Long Break
+  ready: Ready
+  running: Running
+  paused: Paused
+  sessions_today: "Sessions today: {count}"
+  daily_goal: "Daily goal: {current}/{target}"
+  time_left: "{minutes}:{seconds}"
+
+tasks:
+  open: Open
+  done: Done
+  cancelled: Cancelled
+  in_progress: In Progress
+  deferred: Deferred
+  question: Question
+  progress: "Progress: {completed}/{total}"
+  no_tasks: No tasks
+
+time:
+  minutes: "{n} min"
+  hours: "{n}h"
+  days: "{n} days"
+  days_left: "{n} days left"
+  today: Today
+  yesterday: Yesterday
+  tomorrow: Tomorrow
+
+calendar:
+  year: Year
+  month: Month
+  day: Day
+  week: Week
+  layers:
+    tasks: Tasks
+    goals: Goals
+    journal: Journal
+    activity: Activity
+
+goals:
+  progress: "Progress: {percent}%"
+  due: "Due: {date}"
+  pace: "Pace: {hours}/day"
+  no_goals: No goals
+
+courses:
+  active: Active
+  completed: Completed
+  lessons: "{completed}/{total} lessons"
+  sections: "{count} sections"
+  no_courses: No courses
+
+books:
+  reading: Currently Reading
+  completed: Completed
+  pages: "p.{current}/{total}"
+  chapters: "{count} chapters"
+  no_books: No books
+
+stats:
+  total_focus: Total Focus Time
+  total_pomodoros: Total Pomodoros
+  tasks_completed: Tasks Completed
+  current_streak: Current Streak
+  longest_streak: Longest Streak
+  by_category: By Category
+
+messages:
+  no_daily_note: "No daily note. Press Enter to create."
+  task_completed: "Task completed!"
+  pomodoro_started: "Pomodoro started!"
+  pomodoro_completed: "Pomodoro completed!"
+  break_started: "Break started!"
+  break_completed: "Break completed!"
+
+help:
+  title: Help
+  navigation: Navigation
+  actions: Actions
+  global: Global
+  press_any_key: Press any key to close

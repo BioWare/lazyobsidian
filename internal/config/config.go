@@ -2,11 +2,43 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// ValidationError represents a configuration validation error.
+type ValidationError struct {
+	Field   string
+	Message string
+}
+
+func (e ValidationError) Error() string {
+	return fmt.Sprintf("%s: %s", e.Field, e.Message)
+}
+
+// ValidationErrors is a collection of validation errors.
+type ValidationErrors []ValidationError
+
+func (e ValidationErrors) Error() string {
+	if len(e) == 0 {
+		return ""
+	}
+	var msgs []string
+	for _, err := range e {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// HasErrors returns true if there are validation errors.
+func (e ValidationErrors) HasErrors() bool {
+	return len(e) > 0
+}
 
 // Config represents the application configuration.
 type Config struct {
@@ -310,4 +342,288 @@ func getConfigDir() (string, error) {
 		configDir = filepath.Join(home, ".config")
 	}
 	return filepath.Join(configDir, "lazyobsidian"), nil
+}
+
+// Validate validates the configuration and returns any errors.
+func (c *Config) Validate() ValidationErrors {
+	var errs ValidationErrors
+
+	// Vault validation
+	if c.Vault.Path == "" {
+		errs = append(errs, ValidationError{
+			Field:   "vault.path",
+			Message: "vault path is required",
+		})
+	} else if !filepath.IsAbs(c.Vault.Path) {
+		errs = append(errs, ValidationError{
+			Field:   "vault.path",
+			Message: "vault path must be absolute",
+		})
+	}
+
+	// Pomodoro validation
+	if c.Pomodoro.WorkMinutes <= 0 {
+		errs = append(errs, ValidationError{
+			Field:   "pomodoro.work_minutes",
+			Message: "work minutes must be positive",
+		})
+	}
+	if c.Pomodoro.ShortBreak <= 0 {
+		errs = append(errs, ValidationError{
+			Field:   "pomodoro.short_break",
+			Message: "short break must be positive",
+		})
+	}
+	if c.Pomodoro.LongBreak <= 0 {
+		errs = append(errs, ValidationError{
+			Field:   "pomodoro.long_break",
+			Message: "long break must be positive",
+		})
+	}
+	if c.Pomodoro.SessionsBeforeLong <= 0 {
+		errs = append(errs, ValidationError{
+			Field:   "pomodoro.sessions_before_long",
+			Message: "sessions before long break must be positive",
+		})
+	}
+	if c.Pomodoro.DailyGoal < 0 {
+		errs = append(errs, ValidationError{
+			Field:   "pomodoro.daily_goal",
+			Message: "daily goal cannot be negative",
+		})
+	}
+
+	// Logging mode validation
+	validLoggingModes := map[string]bool{"context": true, "daily": true, "single_file": true}
+	if c.Pomodoro.Logging.Mode != "" && !validLoggingModes[c.Pomodoro.Logging.Mode] {
+		errs = append(errs, ValidationError{
+			Field:   "pomodoro.logging.mode",
+			Message: fmt.Sprintf("invalid logging mode: %s (valid: context, daily, single_file)", c.Pomodoro.Logging.Mode),
+		})
+	}
+
+	// Logging format validation
+	validLoggingFormats := map[string]bool{"inline": true, "section": true, "table": true}
+	if c.Pomodoro.Logging.Format != "" && !validLoggingFormats[c.Pomodoro.Logging.Format] {
+		errs = append(errs, ValidationError{
+			Field:   "pomodoro.logging.format",
+			Message: fmt.Sprintf("invalid logging format: %s (valid: inline, section, table)", c.Pomodoro.Logging.Format),
+		})
+	}
+
+	// Sound validation
+	if c.Sounds.Volume < 0 || c.Sounds.Volume > 1 {
+		errs = append(errs, ValidationError{
+			Field:   "sounds.volume",
+			Message: "volume must be between 0 and 1",
+		})
+	}
+
+	// Icons mode validation
+	validIconModes := map[string]bool{"emoji": true, "nerd": true, "nerd_minimal": true, "ascii": true}
+	if c.Icons.Mode != "" && !validIconModes[c.Icons.Mode] {
+		errs = append(errs, ValidationError{
+			Field:   "icons.mode",
+			Message: fmt.Sprintf("invalid icon mode: %s (valid: emoji, nerd, nerd_minimal, ascii)", c.Icons.Mode),
+		})
+	}
+
+	// Theme validation
+	validThemes := map[string]bool{"corsair-light": true, "corsair-dark": true}
+	if c.Theme.Current != "" && !validThemes[c.Theme.Current] {
+		// Allow custom themes, just warn if not a known built-in
+		// This is not an error, just a note
+	}
+
+	// Display validation
+	if c.Display.DynamicWindows.SidebarNormal < 10 || c.Display.DynamicWindows.SidebarNormal > 50 {
+		errs = append(errs, ValidationError{
+			Field:   "display.dynamic_windows.sidebar_normal",
+			Message: "sidebar normal width must be between 10% and 50%",
+		})
+	}
+	if c.Display.DynamicWindows.SidebarMinimized < 5 || c.Display.DynamicWindows.SidebarMinimized > 30 {
+		errs = append(errs, ValidationError{
+			Field:   "display.dynamic_windows.sidebar_minimized",
+			Message: "sidebar minimized width must be between 5% and 30%",
+		})
+	}
+
+	// Progress bar style validation
+	validProgressStyles := map[string]bool{"blocks": true, "line": true, "dots": true, "percent": true}
+	if c.Display.ProgressBarStyle != "" && !validProgressStyles[c.Display.ProgressBarStyle] {
+		errs = append(errs, ValidationError{
+			Field:   "display.progress_bar_style",
+			Message: fmt.Sprintf("invalid progress bar style: %s (valid: blocks, line, dots, percent)", c.Display.ProgressBarStyle),
+		})
+	}
+
+	// First day of week validation
+	validFirstDays := map[string]bool{"monday": true, "sunday": true}
+	if c.Display.FirstDayOfWeek != "" && !validFirstDays[c.Display.FirstDayOfWeek] {
+		errs = append(errs, ValidationError{
+			Field:   "display.first_day_of_week",
+			Message: fmt.Sprintf("invalid first day of week: %s (valid: monday, sunday)", c.Display.FirstDayOfWeek),
+		})
+	}
+
+	// Language validation
+	validLanguages := map[string]bool{"en": true, "ru": true}
+	if c.Language != "" && !validLanguages[c.Language] {
+		errs = append(errs, ValidationError{
+			Field:   "language",
+			Message: fmt.Sprintf("unsupported language: %s (valid: en, ru)", c.Language),
+		})
+	}
+
+	// Task statuses validation
+	if len(c.Tasks.Statuses) == 0 {
+		errs = append(errs, ValidationError{
+			Field:   "tasks.statuses",
+			Message: "at least one task status must be defined",
+		})
+	} else {
+		symbolsSeen := make(map[string]bool)
+		namesSeen := make(map[string]bool)
+		for i, status := range c.Tasks.Statuses {
+			if status.Symbol == "" {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("tasks.statuses[%d].symbol", i),
+					Message: "status symbol is required",
+				})
+			} else if symbolsSeen[status.Symbol] {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("tasks.statuses[%d].symbol", i),
+					Message: fmt.Sprintf("duplicate symbol: %s", status.Symbol),
+				})
+			} else {
+				symbolsSeen[status.Symbol] = true
+			}
+
+			if status.Name == "" {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("tasks.statuses[%d].name", i),
+					Message: "status name is required",
+				})
+			} else if namesSeen[status.Name] {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("tasks.statuses[%d].name", i),
+					Message: fmt.Sprintf("duplicate name: %s", status.Name),
+				})
+			} else {
+				namesSeen[status.Name] = true
+			}
+		}
+	}
+
+	return errs
+}
+
+// ValidateAndFix validates the configuration and applies default fixes where possible.
+// Returns true if any fixes were applied.
+func (c *Config) ValidateAndFix() (bool, ValidationErrors) {
+	fixed := false
+
+	// Apply defaults for missing values
+	if c.Pomodoro.WorkMinutes <= 0 {
+		c.Pomodoro.WorkMinutes = 25
+		fixed = true
+	}
+	if c.Pomodoro.ShortBreak <= 0 {
+		c.Pomodoro.ShortBreak = 5
+		fixed = true
+	}
+	if c.Pomodoro.LongBreak <= 0 {
+		c.Pomodoro.LongBreak = 15
+		fixed = true
+	}
+	if c.Pomodoro.SessionsBeforeLong <= 0 {
+		c.Pomodoro.SessionsBeforeLong = 4
+		fixed = true
+	}
+	if c.Pomodoro.DailyGoal < 0 {
+		c.Pomodoro.DailyGoal = 5
+		fixed = true
+	}
+
+	// Fix sound volume
+	if c.Sounds.Volume < 0 {
+		c.Sounds.Volume = 0
+		fixed = true
+	} else if c.Sounds.Volume > 1 {
+		c.Sounds.Volume = 1
+		fixed = true
+	}
+
+	// Fix sidebar widths
+	if c.Display.DynamicWindows.SidebarNormal < 10 {
+		c.Display.DynamicWindows.SidebarNormal = 10
+		fixed = true
+	} else if c.Display.DynamicWindows.SidebarNormal > 50 {
+		c.Display.DynamicWindows.SidebarNormal = 50
+		fixed = true
+	}
+	if c.Display.DynamicWindows.SidebarMinimized < 5 {
+		c.Display.DynamicWindows.SidebarMinimized = 5
+		fixed = true
+	} else if c.Display.DynamicWindows.SidebarMinimized > 30 {
+		c.Display.DynamicWindows.SidebarMinimized = 30
+		fixed = true
+	}
+
+	// Default task statuses if missing
+	if len(c.Tasks.Statuses) == 0 {
+		c.Tasks.Statuses = DefaultConfig().Tasks.Statuses
+		fixed = true
+	}
+
+	// Validate remaining issues that can't be auto-fixed
+	errs := c.Validate()
+
+	return fixed, errs
+}
+
+// EnsureVaultPath checks if the vault path exists and optionally creates required folders.
+func (c *Config) EnsureVaultPath() error {
+	if c.Vault.Path == "" {
+		return errors.New("vault path is not configured")
+	}
+
+	// Check if vault exists
+	info, err := os.Stat(c.Vault.Path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("vault path does not exist: %s", c.Vault.Path)
+		}
+		return fmt.Errorf("cannot access vault path: %w", err)
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("vault path is not a directory: %s", c.Vault.Path)
+	}
+
+	// Create required folders if enabled
+	if c.Vault.AutoCreateFolders {
+		folders := []string{
+			c.Folders.Daily,
+			c.Folders.Goals,
+			c.Folders.Courses,
+			c.Folders.Books,
+			c.Folders.Notes,
+			c.Folders.Templates,
+			c.Folders.Wishlist,
+		}
+
+		for _, folder := range folders {
+			if folder == "" {
+				continue
+			}
+			fullPath := filepath.Join(c.Vault.Path, folder)
+			if err := os.MkdirAll(fullPath, 0755); err != nil {
+				return fmt.Errorf("failed to create folder %s: %w", folder, err)
+			}
+		}
+	}
+
+	return nil
 }
