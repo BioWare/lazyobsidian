@@ -1,5 +1,5 @@
 # Binaries
-lazyobsidian
+/lazyobsidian
 *.exe
 *.exe~
 *.dll
